@@ -6,8 +6,8 @@ export interface AgentConfig {
 	role: AgentRole;
 	model: string;
 	systemPrompt: string;
-	maxTokens: number;   // kept for documentation; no longer passed to the SDK
-	maxTurns?: number;   // controls query() maxTurns; defaults to 30 in runner
+	maxTokens: number; // kept for documentation; no longer passed to the SDK
+	maxTurns?: number; // controls query() maxTurns; defaults to 30 in runner
 }
 
 // ─── GitHub Project types ─────────────────────────────────────────────────────

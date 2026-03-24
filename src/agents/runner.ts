@@ -41,9 +41,7 @@ export async function runAgent(
 					: JSON.stringify(message.result);
 			const success = message.stop_reason === "end_turn";
 
-			console.log(
-				`[${config.role}] Done: stop_reason=${message.stop_reason}`,
-			);
+			console.log(`[${config.role}] Done: stop_reason=${message.stop_reason}`);
 
 			return {
 				role: config.role,
@@ -71,6 +69,7 @@ function buildUserMessage(input: AgentInput): string {
 	const parts: string[] = [
 		`## Webhook Event: ${input.context.event}`,
 		`Repository: ${input.context.repo.owner}/${input.context.repo.repo}`,
+		`Default Branch: ${input.context.repo.defaultBranch}`,
 	];
 
 	if (input.ticket) {

@@ -1,10 +1,10 @@
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import type { Octokit } from "@octokit/rest";
 import { z } from "zod";
+import type { AgentRole, RepoContext, ToolCall } from "../types.ts";
 import { executeCITool } from "./ci.ts";
 import { executeGitTool } from "./git.ts";
 import { executeGitHubTool } from "./github.ts";
-import type { AgentRole, RepoContext, ToolCall } from "../types.ts";
 
 // ─── MCP server factory ───────────────────────────────────────────────────────
 // Creates an in-process MCP server scoped to a single agent invocation.
@@ -239,9 +239,7 @@ export function createAgentMcpServer(
 		{
 			path: z
 				.string()
-				.describe(
-					"File path relative to repo root, e.g. src/handlers/auth.rs",
-				),
+				.describe("File path relative to repo root, e.g. src/handlers/auth.rs"),
 			content: z.string().describe("Full file content as a UTF-8 string"),
 			commit_message: z
 				.string()
@@ -311,7 +309,13 @@ export function createAgentMcpServer(
 		},
 	);
 
-	const gitTools = [createBranch, readFile, writeFile, writeFiles, listDirectory];
+	const gitTools = [
+		createBranch,
+		readFile,
+		writeFile,
+		writeFiles,
+		listDirectory,
+	];
 
 	// ── CI tools ──────────────────────────────────────────────────────────────
 
