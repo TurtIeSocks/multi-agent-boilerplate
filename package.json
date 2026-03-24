@@ -2,9 +2,11 @@
 	"name": "multi-agent-test",
 	"private": true,
 	"scripts": {
-		"start": "bun run src/setup.ts",
+		"setup": "bun run src/setup.ts",
+		"dev": "bun run src/server.ts",
 		"lint": "biome check --write --unsafe",
-		"test": "bun test"
+		"test": "bun test",
+		"webhook": "bunx --bun localtunnel --port 3000"
 	},
 	"dependencies": {
 		"@anthropic-ai/sdk": "0.80.0",

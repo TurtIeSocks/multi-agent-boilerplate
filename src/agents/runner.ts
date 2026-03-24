@@ -1,5 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Octokit } from "@octokit/rest";
+import { executeGitTool, GIT_TOOLS } from "../tools/git.ts";
 import { executeGitHubTool, GITHUB_TOOLS } from "../tools/github.ts";
 import type {
 	AgentAction,
@@ -7,6 +8,7 @@ import type {
 	AgentInput,
 	AgentOutput,
 	RepoContext,
+	ToolCall,
 	ToolResult,
 } from "../types.ts";
 
@@ -37,6 +39,13 @@ export async function runAgent(
 
 	console.log(`[${config.role}] Starting agent loop`);
 
+	// Git tools are only exposed to dev agents — PM, QA, and Refactor don't need
+	// to write files; giving them git tools just adds noise to their context.
+	const DEV_ROLES = new Set(["backend", "frontend"]);
+	const allTools = DEV_ROLES.has(config.role)
+		? [...GITHUB_TOOLS, ...GIT_TOOLS]
+		: GITHUB_TOOLS;
+
 	while (rounds < MAX_TOOL_ROUNDS) {
 		rounds++;
 
@@ -44,7 +53,7 @@ export async function runAgent(
 			model: config.model,
 			max_tokens: config.maxTokens,
 			system: config.systemPrompt,
-			tools: GITHUB_TOOLS.map((t) => ({
+			tools: allTools.map((t) => ({
 				name: t.name,
 				description: t.description,
 				input_schema: t.input_schema,
@@ -84,11 +93,17 @@ export async function runAgent(
 					toolCall.input,
 				);
 
-				const result = await executeGitHubTool(octokit, repo, {
+				const tc: ToolCall = {
 					id: toolCall.id,
 					name: toolCall.name,
 					input: toolCall.input as Record<string, unknown>,
-				});
+				};
+
+				// Route to the right executor based on which tool set owns this tool name
+				const isGitTool = GIT_TOOLS.some((t) => t.name === toolCall.name);
+				const result = isGitTool
+					? await executeGitTool(octokit, repo, tc)
+					: await executeGitHubTool(octokit, repo, tc);
 
 				toolResults.push(result);
 
@@ -171,6 +186,7 @@ function inferAction(
 	input: Record<string, unknown>,
 ): AgentAction {
 	const map: Record<string, AgentAction["type"]> = {
+		// GitHub tools
 		create_ticket: "created_ticket",
 		update_ticket: "updated_ticket",
 		close_ticket: "closed_ticket",
@@ -178,6 +194,12 @@ function inferAction(
 		comment_on_ticket: "commented",
 		add_label: "labeled_ticket",
 		list_open_tickets: "updated_ticket",
+		// Git tools
+		create_branch: "committed_code",
+		read_file: "committed_code",
+		write_file: "committed_code",
+		write_files: "committed_code",
+		list_directory: "committed_code",
 	};
 
 	return {
