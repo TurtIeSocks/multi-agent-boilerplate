@@ -31,6 +31,7 @@ export async function runAgent(
 			maxTurns: config.maxTurns ?? 30,
 			model: config.model,
 			mcpServers: { tools: mcpServer },
+			settingSources: ["user"],
 		},
 	})) {
 		if ("result" in message) {
