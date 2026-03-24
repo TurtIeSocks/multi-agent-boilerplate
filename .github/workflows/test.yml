@@ -1,0 +1,211 @@
+name: Test Suite
+
+on:
+  push:
+    branches: ["main", "develop"]
+  pull_request:
+    branches: ["main", "develop"]
+  # Allows the QA agent to trigger this workflow on any branch on demand
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to test"
+        required: false
+        default: "main"
+      triggered_by:
+        description: "Who triggered this run (agent name or 'human')"
+        required: false
+        default: "human"
+      issue_number:
+        description: "Related issue number for reporting back"
+        required: false
+        default: ""
+
+# Cancel in-progress runs on the same branch to avoid queue buildup
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Detect what's in the repo ───────────────────────────────────────────────
+  # Rather than assuming a stack, we probe for known project files and expose
+  # them as outputs that downstream jobs condition on.
+  detect:
+    name: Detect project types
+    runs-on: ubuntu-latest
+    outputs:
+      has_rust: ${{ steps.probe.outputs.has_rust }}
+      has_frontend: ${{ steps.probe.outputs.has_frontend }}
+      has_orchestrator: ${{ steps.probe.outputs.has_orchestrator }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch || github.ref }}
+
+      - name: Probe for project types
+        id: probe
+        run: |
+          has_rust=false
+          has_frontend=false
+          has_orchestrator=false
+
+          [ -f "Cargo.toml" ] && has_rust=true
+          # Frontend project = package.json outside the orchestrator root
+          [ -f "frontend/package.json" ] || [ -f "client/package.json" ] || [ -f "web/package.json" ] && has_frontend=true
+          # Orchestrator itself (this repo)
+          [ -f "src/server.ts" ] && [ -f "src/orchestrator.ts" ] && has_orchestrator=true
+
+          echo "has_rust=$has_rust"         >> $GITHUB_OUTPUT
+          echo "has_frontend=$has_frontend" >> $GITHUB_OUTPUT
+          echo "has_orchestrator=$has_orchestrator" >> $GITHUB_OUTPUT
+
+          echo "### Project Detection" >> $GITHUB_STEP_SUMMARY
+          echo "- Rust project: $has_rust" >> $GITHUB_STEP_SUMMARY
+          echo "- Frontend project: $has_frontend" >> $GITHUB_STEP_SUMMARY
+          echo "- Orchestrator: $has_orchestrator" >> $GITHUB_STEP_SUMMARY
+
+  # ── Rust tests ───────────────────────────────────────────────────────────────
+  test-rust:
+    name: Rust tests
+    needs: detect
+    if: needs.detect.outputs.has_rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch || github.ref }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy -- -D warnings
+
+      - name: Run tests
+        run: cargo test --all-features 2>&1 | tee test-output.txt
+
+      - name: Upload test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-test-output
+          path: test-output.txt
+
+  # ── Frontend tests ───────────────────────────────────────────────────────────
+  test-frontend:
+    name: Frontend tests
+    needs: detect
+    if: needs.detect.outputs.has_frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch || github.ref }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Find frontend directory
+        id: find-frontend
+        run: |
+          for dir in frontend client web; do
+            if [ -f "$dir/package.json" ]; then
+              echo "dir=$dir" >> $GITHUB_OUTPUT
+              break
+            fi
+          done
+
+      - name: Install dependencies
+        working-directory: ${{ steps.find-frontend.outputs.dir }}
+        run: bun install --frozen-lockfile
+
+      - name: Type check
+        working-directory: ${{ steps.find-frontend.outputs.dir }}
+        run: bun tsc --noEmit
+
+      - name: Lint
+        working-directory: ${{ steps.find-frontend.outputs.dir }}
+        run: bun run lint 2>&1 | tee lint-output.txt || true
+
+      - name: Run tests
+        working-directory: ${{ steps.find-frontend.outputs.dir }}
+        run: bun test 2>&1 | tee test-output.txt
+
+      - name: Upload test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-test-output
+          path: ${{ steps.find-frontend.outputs.dir }}/test-output.txt
+
+  # ── Orchestrator tests (this repo) ───────────────────────────────────────────
+  test-orchestrator:
+    name: Orchestrator type check
+    needs: detect
+    if: needs.detect.outputs.has_orchestrator == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch || github.ref }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Type check
+        run: bun tsc --noEmit
+
+  # ── Summary job ──────────────────────────────────────────────────────────────
+  # Always runs — gives a single "all tests passed" signal the QA agent can poll.
+  # Status is "success" only if all applicable jobs passed.
+  summary:
+    name: All tests passed
+    needs: [detect, test-rust, test-frontend, test-orchestrator]
+    # Run even if upstream jobs were skipped (i.e. not applicable for this stack)
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        run: |
+          results='${{ toJSON(needs) }}'
+          echo "Job results: $results"
+
+          # Extract results, treating 'skipped' as passing (job didn't apply)
+          rust_result=$(echo "$results" | jq -r '."test-rust".result // "skipped"')
+          frontend_result=$(echo "$results" | jq -r '."test-frontend".result // "skipped"')
+          orchestrator_result=$(echo "$results" | jq -r '."test-orchestrator".result // "skipped"')
+
+          echo "### Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Result |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Rust | $rust_result |" >> $GITHUB_STEP_SUMMARY
+          echo "| Frontend | $frontend_result |" >> $GITHUB_STEP_SUMMARY
+          echo "| Orchestrator | $orchestrator_result |" >> $GITHUB_STEP_SUMMARY
+
+          # Fail if any job actually failed (not just skipped)
+          for result in "$rust_result" "$frontend_result" "$orchestrator_result"; do
+            if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
+              echo "❌ One or more jobs failed."
+              exit 1
+            fi
+          done
+
+          echo "✅ All applicable tests passed."

@@ -1,5 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Octokit } from "@octokit/rest";
+import { CI_TOOLS, executeCITool } from "../tools/ci.ts";
 import { executeGitTool, GIT_TOOLS } from "../tools/git.ts";
 import { executeGitHubTool, GITHUB_TOOLS } from "../tools/github.ts";
 import type {
@@ -12,7 +13,9 @@ import type {
 	ToolResult,
 } from "../types.ts";
 
-const MAX_TOOL_ROUNDS = 20; // safety ceiling — prevent runaway loops
+// QA agents run longer loops: trigger → poll (multiple rounds) → review → ticket creation.
+// 30 rounds gives comfortable headroom without being a runaway ceiling.
+const MAX_TOOL_ROUNDS = 30;
 
 // ─── Core agentic loop ────────────────────────────────────────────────────────
 // Each agent shares this loop. It drives Claude through tool calls until
@@ -39,12 +42,16 @@ export async function runAgent(
 
 	console.log(`[${config.role}] Starting agent loop`);
 
-	// Git tools are only exposed to dev agents — PM, QA, and Refactor don't need
-	// to write files; giving them git tools just adds noise to their context.
+	// Tool access by role — each agent only sees the tools it actually needs:
+	//   dev agents   → GitHub + Git (create branches, write files, open PRs)
+	//   qa agent     → GitHub + CI  (trigger tests, read check results)
+	//   pm/refactor  → GitHub only  (manage tickets and comments)
 	const DEV_ROLES = new Set(["backend", "frontend"]);
 	const allTools = DEV_ROLES.has(config.role)
 		? [...GITHUB_TOOLS, ...GIT_TOOLS]
-		: GITHUB_TOOLS;
+		: config.role === "qa"
+			? [...GITHUB_TOOLS, ...CI_TOOLS]
+			: GITHUB_TOOLS;
 
 	while (rounds < MAX_TOOL_ROUNDS) {
 		rounds++;
@@ -101,9 +108,12 @@ export async function runAgent(
 
 				// Route to the right executor based on which tool set owns this tool name
 				const isGitTool = GIT_TOOLS.some((t) => t.name === toolCall.name);
+				const isCITool = CI_TOOLS.some((t) => t.name === toolCall.name);
 				const result = isGitTool
 					? await executeGitTool(octokit, repo, tc)
-					: await executeGitHubTool(octokit, repo, tc);
+					: isCITool
+						? await executeCITool(octokit, repo, tc)
+						: await executeGitHubTool(octokit, repo, tc);
 
 				toolResults.push(result);
 
