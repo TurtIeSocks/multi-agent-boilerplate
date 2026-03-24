@@ -7,13 +7,13 @@ Humans and agents collaborate through GitHub Issues, PRs, and the Project board.
 
 ## The Team
 
-| Agent | Role | Triggered by |
-|---|---|---|
-| **PM** | Triage, sprint planning, ticket writing | `issues.opened`, `project_v2_item.created` |
-| **Backend** | Rust implementation | Issue labeled `in-progress` + `backend` |
-| **Frontend** | TypeScript/React implementation | Issue labeled `in-progress` + `frontend` |
-| **QA** | Review PRs, file regression tickets | `pull_request.opened` |
-| **Refactor** | Post-merge cleanup tickets | `pull_request.merged` |
+| Agent        | Role                                    | Triggered by                               |
+| ------------ | --------------------------------------- | ------------------------------------------ |
+| **PM**       | Triage, sprint planning, ticket writing | `issues.opened`, `project_v2_item.created` |
+| **Backend**  | Rust implementation                     | Issue labeled `in-progress` + `backend`    |
+| **Frontend** | TypeScript/React implementation         | Issue labeled `in-progress` + `frontend`   |
+| **QA**       | Review PRs, file regression tickets     | `pull_request.opened`                      |
+| **Refactor** | Post-merge cleanup tickets              | `pull_request.merged`                      |
 
 ---
 
@@ -39,35 +39,39 @@ Refactor agent scans for cleanup opportunities — files low-priority tickets
 
 ## Board Columns
 
-| Column | Meaning |
-|---|---|
-| **Backlog** | Triaged and ready to be picked up |
+| Column          | Meaning                                     |
+| --------------- | ------------------------------------------- |
+| **Backlog**     | Triaged and ready to be picked up           |
 | **In Progress** | An agent or human is actively working on it |
-| **In Review** | PR is open, waiting for QA |
-| **Done** | Merged and closed |
-| **Blocked** | Needs human attention before it can move |
+| **In Review**   | PR is open, waiting for QA                  |
+| **Done**        | Merged and closed                           |
+| **Blocked**     | Needs human attention before it can move    |
 
 ---
 
 ## Labels
 
 ### Routing labels (tell agents who owns this)
+
 - `backend` — Rust work
 - `frontend` — TypeScript/React work
 - `qa` — Testing or QA work
 - `refactor` — Code cleanup
 
 ### Status labels
+
 - `in-progress` — Triggers dev agent dispatch
 - `blocked` — PM agent will comment with why
 - `regression` — Filed by QA agent, always needs review
 
 ### Type labels
+
 - `bug` — Something broken
 - `chore` — Maintenance, deps, infra
 - `epic` — Large feature, PM will break it down
 
 ### Priority labels
+
 - `priority:critical` — Production down
 - `priority:high` — Blocking users
 - `priority:medium` — Normal planned work
@@ -81,16 +85,20 @@ All tickets created by the PM agent follow this structure:
 
 ```markdown
 ## Context
+
 Why this work is needed and what problem it solves.
 
 ## Acceptance Criteria
+
 - [ ] Specific, testable criterion 1
 - [ ] Specific, testable criterion 2
 
 ## Out of Scope
+
 What this ticket explicitly does NOT cover (prevents scope creep).
 
 ## Notes
+
 Any technical constraints, links, or additional context.
 ```
 
