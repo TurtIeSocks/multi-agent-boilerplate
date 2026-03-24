@@ -80,11 +80,7 @@ async function main() {
 		defaultBranch: process.env.DEFAULT_BRANCH ?? "main",
 	};
 
-	const orchestrator = new Orchestrator(
-		config.anthropic.apiKey,
-		config.github.token,
-		repo,
-	);
+	const orchestrator = new Orchestrator(config.github.token, repo);
 
 	// ── Health check ──────────────────────────────────────────────────────────
 	app.get("/health", (c) =>

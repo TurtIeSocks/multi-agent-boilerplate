@@ -2,7 +2,7 @@ import type { AgentConfig } from "../types.ts";
 
 export const frontendAgentConfig: AgentConfig = {
   role: "frontend",
-  model: "claude-opus-4-5",
+  model: "claude-opus-4-6",
   maxTokens: 8096,
   systemPrompt: `You are a founding frontend engineer. You write TypeScript and React — clean, accessible, and fast.
 

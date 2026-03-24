@@ -1,155 +1,70 @@
-import type Anthropic from "@anthropic-ai/sdk";
+import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { Octokit } from "@octokit/rest";
-import { CI_TOOLS, executeCITool } from "../tools/ci.ts";
-import { executeGitTool, GIT_TOOLS } from "../tools/git.ts";
-import { executeGitHubTool, GITHUB_TOOLS } from "../tools/github.ts";
+import { createAgentMcpServer } from "../tools/mcp-server.ts";
 import type {
-	AgentAction,
 	AgentConfig,
 	AgentInput,
 	AgentOutput,
 	RepoContext,
-	ToolCall,
-	ToolResult,
 } from "../types.ts";
 
-// QA agents run longer loops: trigger → poll (multiple rounds) → review → ticket creation.
-// 30 rounds gives comfortable headroom without being a runaway ceiling.
-const MAX_TOOL_ROUNDS = 30;
-
-// ─── Core agentic loop ────────────────────────────────────────────────────────
-// Each agent shares this loop. It drives Claude through tool calls until
-// Claude stops calling tools (i.e. it's done with the task).
-//
-// Before: you'd have to call Claude once, parse the response, run tools,
-//         stitch results back in, call again — manually.
-// After:  call runAgent(), it handles the full multi-turn tool loop for you.
+// ─── Core agent runner ────────────────────────────────────────────────────────
+// Replaces the manual multi-turn Claude API loop with the Agent SDK's query().
+// The SDK handles the tool-calling loop internally; our custom GitHub/Git/CI
+// tools are exposed as an in-process MCP server so the agent can call them.
 
 export async function runAgent(
-	client: Anthropic,
 	octokit: Octokit,
 	config: AgentConfig,
 	input: AgentInput,
 	repo: RepoContext,
 ): Promise<AgentOutput> {
-	const actionsPerformed: AgentAction[] = [];
-	const messages: Anthropic.MessageParam[] = [];
-	let rounds = 0;
-
-	// Build the initial user message from the webhook context + ticket
-	const userMessage = buildUserMessage(input);
-	messages.push({ role: "user", content: userMessage });
+	const prompt = buildUserMessage(input);
+	const mcpServer = createAgentMcpServer(octokit, repo, config.role);
 
 	console.log(`[${config.role}] Starting agent loop`);
 
-	// Tool access by role — each agent only sees the tools it actually needs:
-	//   dev agents   → GitHub + Git (create branches, write files, open PRs)
-	//   qa agent     → GitHub + CI  (trigger tests, read check results)
-	//   pm/refactor  → GitHub only  (manage tickets and comments)
-	const DEV_ROLES = new Set(["backend", "frontend"]);
-	const allTools = DEV_ROLES.has(config.role)
-		? [...GITHUB_TOOLS, ...GIT_TOOLS]
-		: config.role === "qa"
-			? [...GITHUB_TOOLS, ...CI_TOOLS]
-			: GITHUB_TOOLS;
-
-	while (rounds < MAX_TOOL_ROUNDS) {
-		rounds++;
-
-		const response = await client.messages.create({
+	for await (const message of query({
+		prompt,
+		options: {
+			systemPrompt: config.systemPrompt,
+			maxTurns: config.maxTurns ?? 30,
 			model: config.model,
-			max_tokens: config.maxTokens,
-			system: config.systemPrompt,
-			tools: allTools.map((t) => ({
-				name: t.name,
-				description: t.description,
-				input_schema: t.input_schema,
-			})),
-			messages,
-		});
+			mcpServers: { tools: mcpServer },
+		},
+	})) {
+		if ("result" in message) {
+			const summary =
+				typeof message.result === "string"
+					? message.result
+					: JSON.stringify(message.result);
+			const success = message.stop_reason === "end_turn";
 
-		console.log(
-			`[${config.role}] Round ${rounds}: stop_reason=${response.stop_reason}`,
-		);
-
-		// Append Claude's response to conversation history
-		messages.push({ role: "assistant", content: response.content });
-
-		// If Claude is done (no more tool calls), extract summary and exit
-		if (response.stop_reason === "end_turn") {
-			const summary = extractTextSummary(response.content);
-			return {
-				role: config.role,
-				success: true,
-				summary,
-				actionsPerformed,
-			};
-		}
-
-		// If Claude wants to call tools, execute them all and feed results back
-		if (response.stop_reason === "tool_use") {
-			const toolCalls = response.content.filter(
-				(block): block is Anthropic.ToolUseBlock => block.type === "tool_use",
+			console.log(
+				`[${config.role}] Done: stop_reason=${message.stop_reason}`,
 			);
 
-			const toolResults: ToolResult[] = [];
-
-			for (const toolCall of toolCalls) {
-				console.log(
-					`[${config.role}] Tool call: ${toolCall.name}`,
-					toolCall.input,
-				);
-
-				const tc: ToolCall = {
-					id: toolCall.id,
-					name: toolCall.name,
-					input: toolCall.input as Record<string, unknown>,
-				};
-
-				// Route to the right executor based on which tool set owns this tool name
-				const isGitTool = GIT_TOOLS.some((t) => t.name === toolCall.name);
-				const isCITool = CI_TOOLS.some((t) => t.name === toolCall.name);
-				const result = isGitTool
-					? await executeGitTool(octokit, repo, tc)
-					: isCITool
-						? await executeCITool(octokit, repo, tc)
-						: await executeGitHubTool(octokit, repo, tc);
-
-				toolResults.push(result);
-
-				// Record what actions were taken for the output summary
-				actionsPerformed.push(
-					inferAction(toolCall.name, toolCall.input as Record<string, unknown>),
-				);
-			}
-
-			// Feed tool results back to Claude as a user turn
-			messages.push({
-				role: "user",
-				content: toolResults.map((r) => ({
-					type: "tool_result" as const,
-					tool_use_id: r.tool_use_id,
-					content: r.content,
-				})),
-			});
-
-			continue;
+			return {
+				role: config.role,
+				success,
+				summary: summary || "Agent completed with no summary.",
+				actionsPerformed: [],
+				error: success ? undefined : `Stopped: ${message.stop_reason}`,
+			};
 		}
-
-		// Unexpected stop reason
-		break;
 	}
 
+	// Stream ended without a result message
 	return {
 		role: config.role,
 		success: false,
-		summary: `Agent hit max rounds (${MAX_TOOL_ROUNDS}) or unexpected stop`,
-		actionsPerformed,
-		error: "Max tool rounds exceeded",
+		summary: "Agent stream ended without a result.",
+		actionsPerformed: [],
+		error: "No result message received from query()",
 	};
 }
 
-// ─── Message builders ─────────────────────────────────────────────────────────
+// ─── Message builder ──────────────────────────────────────────────────────────
 
 function buildUserMessage(input: AgentInput): string {
 	const parts: string[] = [
@@ -179,42 +94,4 @@ function buildUserMessage(input: AgentInput): string {
 	);
 
 	return parts.join("\n");
-}
-
-function extractTextSummary(content: Anthropic.ContentBlock[]): string {
-	return (
-		content
-			.filter((b): b is Anthropic.TextBlock => b.type === "text")
-			.map((b) => b.text)
-			.join("\n")
-			.trim() || "Agent completed with no summary."
-	);
-}
-
-function inferAction(
-	toolName: string,
-	input: Record<string, unknown>,
-): AgentAction {
-	const map: Record<string, AgentAction["type"]> = {
-		// GitHub tools
-		create_ticket: "created_ticket",
-		update_ticket: "updated_ticket",
-		close_ticket: "closed_ticket",
-		open_pull_request: "opened_pr",
-		comment_on_ticket: "commented",
-		add_label: "labeled_ticket",
-		list_open_tickets: "updated_ticket",
-		// Git tools
-		create_branch: "committed_code",
-		read_file: "committed_code",
-		write_file: "committed_code",
-		write_files: "committed_code",
-		list_directory: "committed_code",
-	};
-
-	return {
-		type: map[toolName] ?? "commented",
-		description: `Called ${toolName}`,
-		metadata: input,
-	};
 }

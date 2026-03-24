@@ -1,4 +1,3 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { Octokit } from "@octokit/rest";
 import { backendAgentConfig } from "./agents/backend.ts";
 import { frontendAgentConfig } from "./agents/frontend.ts";
@@ -20,12 +19,10 @@ import type {
 // ─── Orchestrator ─────────────────────────────────────────────────────────────
 
 export class Orchestrator {
-	private anthropic: Anthropic;
 	private octokit: Octokit;
 	private repo: RepoContext;
 
-	constructor(anthropicKey: string, githubToken: string, repo: RepoContext) {
-		this.anthropic = new Anthropic({ apiKey: anthropicKey });
+	constructor(githubToken: string, repo: RepoContext) {
 		this.octokit = new Octokit({ auth: githubToken });
 		this.repo = repo;
 	}
@@ -45,13 +42,7 @@ export class Orchestrator {
 		console.log(`[orchestrator] Routing to agent: ${route.config.role}`);
 
 		const input = await this.buildAgentInput(context, route);
-		return runAgent(
-			this.anthropic,
-			this.octokit,
-			route.config,
-			input,
-			this.repo,
-		);
+		return runAgent(this.octokit, route.config, input, this.repo);
 	}
 
 	// ─── Event router ───────────────────────────────────────────────────────────

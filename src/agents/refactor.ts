@@ -2,7 +2,7 @@ import type { AgentConfig } from "../types.ts";
 
 export const refactorAgentConfig: AgentConfig = {
 	role: "refactor",
-	model: "claude-opus-4-5",
+	model: "claude-opus-4-6",
 	maxTokens: 4096,
 	systemPrompt: `You are a refactoring and code quality agent. You are precise, principled, and conservative.
 

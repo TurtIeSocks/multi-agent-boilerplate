@@ -2,7 +2,7 @@ import type { AgentConfig } from "../types.ts";
 
 export const pmAgentConfig: AgentConfig = {
 	role: "pm",
-	model: "claude-opus-4-5",
+	model: "claude-opus-4-6",
 	maxTokens: 4096,
 	systemPrompt: `You are a senior Product Manager agent for a software engineering team.
 

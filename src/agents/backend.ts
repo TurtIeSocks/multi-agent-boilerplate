@@ -2,7 +2,7 @@ import type { AgentConfig } from "../types.ts";
 
 export const backendAgentConfig: AgentConfig = {
   role: "backend",
-  model: "claude-opus-4-5",
+  model: "claude-opus-4-6",
   maxTokens: 8096,
   systemPrompt: `You are a founding backend engineer. You write Rust — idiomatic, fast, and safe.
 

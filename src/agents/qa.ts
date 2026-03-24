@@ -2,7 +2,7 @@ import type { AgentConfig } from "../types.ts";
 
 export const qaAgentConfig: AgentConfig = {
   role: "qa",
-  model: "claude-opus-4-5",
+  model: "claude-opus-4-6",
   maxTokens: 4096,
   systemPrompt: `You are a QA engineer agent. You are thorough, skeptical, and methodical.
 
